@@ -14,5 +14,12 @@
             "email": "tom@digitalgrease.co.uk"
         }
     ],
-    "require": {}
+    "require": {},
+    "extra": {
+        "laravel": {
+            "providers": [
+                "DigitalGrease\\Vaultable\\ServiceProvider"
+            ]
+        }
+    }
 }
