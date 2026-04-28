@@ -5,7 +5,8 @@
     "license": "MIT",
     "autoload": {
         "psr-4": {
-            "DigitalGrease\\Vaultable\\": "src/"
+            "DigitalGrease\\Vaultable\\": "src/",
+            "DigitalGrease\\Vaultable\\Tests\\": "tests/"
         }
     },
     "authors": [
@@ -22,7 +23,8 @@
         }
     },
     "require-dev": {
-        "orchestra/testbench": "^10.8"
+        "orchestra/testbench": "^10.8",
+        "phpunit/phpunit": "^11.0"
     },
     "autoload-dev": {
         "psr-4": {
@@ -43,6 +45,7 @@
             "Composer\\Config::disableProcessTimeout",
             "@build",
             "@php vendor/bin/testbench serve --ansi"
-        ]
+        ],
+        "test": "@php vendor/bin/phpunit"
     }
 }
