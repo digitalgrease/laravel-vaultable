@@ -6,6 +6,7 @@ use DigitalGrease\Vaultable\Contracts\VaultServiceInterface;
 use DigitalGrease\Vaultable\Events\VaultCreated;
 use DigitalGrease\Vaultable\Events\VaultLocked;
 use DigitalGrease\Vaultable\Events\VaultUnlocked;
+use DigitalGrease\Vaultable\Exceptions\VaultDecryptionFailedException;
 use DigitalGrease\Vaultable\Exceptions\VaultLockedException;
 use DigitalGrease\Vaultable\Tests\Fixtures\Models\User;
 use DigitalGrease\Vaultable\Tests\TestCase;
@@ -151,5 +152,87 @@ class VaultServiceTest extends TestCase
         $vmkAfterRotation = $this->vaultService->getVmk();
 
         $this->assertSame($originalVmk, $vmkAfterRotation);
+    }
+
+    #[Test]
+    public function it_round_trips_application_data_through_encrypt_and_decrypt(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+
+        $plaintext = 'super secret note';
+        $encoded = $this->vaultService->encrypt($plaintext);
+
+        $this->assertNotSame($plaintext, $encoded);
+        $this->assertSame($plaintext, $this->vaultService->decrypt($encoded));
+    }
+
+    #[Test]
+    public function it_produces_a_different_ciphertext_each_time_for_the_same_plaintext(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+
+        $a = $this->vaultService->encrypt('same input');
+        $b = $this->vaultService->encrypt('same input');
+
+        $this->assertNotSame($a, $b);
+    }
+
+    #[Test]
+    public function it_round_trips_an_empty_string(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+
+        $encoded = $this->vaultService->encrypt('');
+
+        $this->assertSame('', $this->vaultService->decrypt($encoded));
+    }
+
+    #[Test]
+    public function it_throws_when_encrypting_with_a_locked_vault(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+        $this->vaultService->lockVault();
+
+        $this->expectException(VaultLockedException::class);
+        $this->vaultService->encrypt('anything');
+    }
+
+    #[Test]
+    public function it_throws_when_decrypting_with_a_locked_vault(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+        $encoded = $this->vaultService->encrypt('payload');
+        $this->vaultService->lockVault();
+
+        $this->expectException(VaultLockedException::class);
+        $this->vaultService->decrypt($encoded);
+    }
+
+    #[Test]
+    public function it_throws_on_malformed_ciphertext(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+
+        $this->expectException(VaultDecryptionFailedException::class);
+        $this->vaultService->decrypt('not-a-valid-blob');
+    }
+
+    #[Test]
+    public function it_throws_on_tampered_ciphertext(): void
+    {
+        $user = User::factory()->create();
+        $this->vaultService->createVault($user, 'password123');
+        $encoded = $this->vaultService->encrypt('payload');
+
+        $tampered = base64_encode(base64_decode($encoded) ^ str_repeat("\x01", strlen(base64_decode($encoded))));
+
+        $this->expectException(VaultDecryptionFailedException::class);
+        $this->vaultService->decrypt($tampered);
     }
 }

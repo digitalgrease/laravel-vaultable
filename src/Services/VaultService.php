@@ -254,6 +254,53 @@ class VaultService implements VaultServiceInterface
     }
 
     /**
+     * Encrypt application data with the unlocked VMK.
+     *
+     * Output format is base64(nonce || ciphertext).
+     *
+     * @throws VaultLockedException
+     */
+    public function encrypt(string $plaintext): string
+    {
+        $vmk = $this->getVmk();
+        $nonce = $this->aeadEncryption->generateNonce();
+
+        $ciphertext = $this->aeadEncryption->encrypt($plaintext, $vmk, $nonce);
+
+        sodium_memzero($vmk);
+
+        return base64_encode($nonce.$ciphertext);
+    }
+
+    /**
+     * Decrypt application data produced by encrypt().
+     *
+     * @throws VaultLockedException
+     * @throws VaultDecryptionFailedException
+     */
+    public function decrypt(string $encoded): string
+    {
+        $blob = base64_decode($encoded, strict: true);
+
+        if ($blob === false || strlen($blob) <= AeadEncryption::NONCE_LENGTH) {
+            throw new VaultDecryptionFailedException(
+                'Encrypted payload is malformed or too short to contain a nonce.'
+            );
+        }
+
+        $nonce = substr($blob, 0, AeadEncryption::NONCE_LENGTH);
+        $ciphertext = substr($blob, AeadEncryption::NONCE_LENGTH);
+
+        $vmk = $this->getVmk();
+
+        try {
+            return $this->aeadEncryption->decrypt($ciphertext, $vmk, $nonce);
+        } finally {
+            sodium_memzero($vmk);
+        }
+    }
+
+    /**
      * Store the VMK in the session using split-key encryption.
      *
      * The VMK is encrypted with a random session key and stored in the server session.

@@ -51,4 +51,24 @@ interface VaultServiceInterface
      * @return bool True if rotation was successful
      */
     public function rotateKek(Model $model, string $oldPassword, string $newPassword): bool;
+
+    /**
+     * Encrypt application data with the unlocked VMK.
+     *
+     * Output format is base64(nonce || ciphertext) — a single string safe to
+     * store in a VARCHAR/TEXT column. The nonce is regenerated on every call.
+     *
+     * @throws \DigitalGrease\Vaultable\Exceptions\VaultLockedException
+     */
+    public function encrypt(string $plaintext): string;
+
+    /**
+     * Decrypt application data with the unlocked VMK.
+     *
+     * Accepts the format produced by encrypt(): base64(nonce || ciphertext).
+     *
+     * @throws \DigitalGrease\Vaultable\Exceptions\VaultLockedException
+     * @throws \DigitalGrease\Vaultable\Exceptions\VaultDecryptionFailedException
+     */
+    public function decrypt(string $encoded): string;
 }

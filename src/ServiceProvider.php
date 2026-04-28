@@ -60,10 +60,18 @@ class ServiceProvider extends \Illuminate\Support\ServiceProvider
      * Using the 'cookie' driver would defeat the security model by placing
      * both the encrypted VMK and the session key on the client.
      *
+     * Skipped during non-test console execution (composer scripts, artisan
+     * commands, package:discover) because no HTTP session exists there. The
+     * check still fires on every first HTTP request and during the test suite.
+     *
      * @throws \RuntimeException
      */
     protected function validateSessionDriver(): void
     {
+        if ($this->app->runningInConsole() && ! $this->app->runningUnitTests()) {
+            return;
+        }
+
         $driver = $this->app['config']->get('session.driver');
 
         if ($driver === 'cookie') {

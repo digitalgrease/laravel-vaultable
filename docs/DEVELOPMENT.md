@@ -212,6 +212,8 @@ src/
 │   ├── TwoFactorAuthWithVault.php          replacement: RedirectIfTwoFactorAuthenticatable
 │   ├── UnlockVaultOnLogin.php              new pipeline stage, runs at the tail
 │   └── UpdateUserPasswordWithVault.php     decorator: UpdatesUserPasswords
+├── Casts/
+│   └── VaultedString.php                   Eloquent cast wrapping encrypt/decrypt
 ├── Contracts/
 │   └── VaultServiceInterface.php           public surface; everything else is internal
 ├── Crypto/
@@ -272,11 +274,31 @@ can do nonce/ciphertext slicing without hard-coding numbers.
 
 The orchestrator. Public methods are exactly the
 [`VaultServiceInterface`](../src/Contracts/VaultServiceInterface.php) surface:
-`createVault`, `unlockVault`, `lockVault`, `isUnlocked`, `getVmk`, `rotateKek`.
+`createVault`, `unlockVault`, `lockVault`, `isUnlocked`, `getVmk`,
+`rotateKek`, `encrypt`, `decrypt`.
 
-Internally it owns the session/cookie storage scheme. The session keys are
-constants on the class (`SESSION_ENCRYPTED_VMK_KEY`, `SESSION_VMK_NONCE_KEY`,
-`SESSION_UNLOCK_TIME_KEY`) and the cookie name is `vaultable_session_key`.
+`encrypt()` and `decrypt()` are convenience helpers for application data.
+They generate a fresh nonce per call, run XChaCha20-Poly1305 against the
+unlocked VMK, and pack the output as base64(`nonce` ‖ `ciphertext`) so a
+single column round-trips losslessly. Both wipe the local VMK copy with
+`sodium_memzero` after use.
+
+Internally `VaultService` owns the session/cookie storage scheme. The session
+keys are constants on the class (`SESSION_ENCRYPTED_VMK_KEY`,
+`SESSION_VMK_NONCE_KEY`, `SESSION_UNLOCK_TIME_KEY`) and the cookie name is
+`vaultable_session_key`.
+
+### `VaultedString` cast
+
+A thin Eloquent `CastsAttributes` implementation that calls
+`VaultService::encrypt` on `set` and `VaultService::decrypt` on `get`. Null
+passes through untouched. Anything else is coerced to a string before
+encryption.
+
+Reading or writing a vaulted attribute throws `VaultLockedException` if no
+vault is unlocked — important for understanding queue behaviour, since a
+queued job that hydrates a model with vaulted attributes will throw the
+moment it touches one.
 
 ### `RecoveryKeyService`
 
@@ -625,9 +647,6 @@ ever observable. If you don't capture it in a listener, it's gone.
   invalidated and there's no migration tool.
 - **No background-job decryption path.** Intentional — see
   [Goals and non-goals](#goals-and-non-goals).
-- **Composer `require` is incomplete.** The package's own `composer.json`
-  declares no runtime requirements (only `require-dev`). Before publishing it
-  needs `php`, `ext-sodium`, `illuminate/support`, and `laravel/fortify`.
 - **No facade.** `app(VaultServiceInterface::class)` is the official way to
   resolve the service. A facade could be added without a breaking change.
 - **`VaultUnlocked` event has no payload for the password.** This is
@@ -637,12 +656,13 @@ ever observable. If you don't capture it in a listener, it's gone.
 
 Probable next moves, in rough order:
 
-1. Ship a `VaultedString` cast and a `VaultedAttribute` trait so application
-   data encryption stops being a copy-paste recipe.
-2. Add the missing `composer.json require` block and tag a 0.1.0 release.
-3. Add a facade (`Vault::isUnlocked()`, `Vault::getVmk()`).
-4. Add Sanctum/Passport integration so API tokens can carry a re-derivable
+1. Ship a `LICENSE` file and tag the first 0.1.0 release.
+2. Add a facade (`Vault::isUnlocked()`, `Vault::getVmk()`,
+   `Vault::encrypt()`, `Vault::decrypt()`).
+3. Add Sanctum/Passport integration so API tokens can carry a re-derivable
    "vault session" without password re-entry on every request. (Hard. Worth
    thinking through carefully.)
-5. Add a re-key console command for the day someone *does* need to rotate the
+4. Add a re-key console command for the day someone *does* need to rotate the
    pepper.
+5. Add a `VaultedJson` / `VaultedEncrypted<T>` cast so structured data can be
+   stored without callers having to JSON-encode by hand.

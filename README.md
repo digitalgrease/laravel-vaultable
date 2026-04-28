@@ -16,7 +16,7 @@ automatically by the auth lifecycle.
   - [Automatic vault management](#automatic-vault-management)
   - [Manual vault operations](#manual-vault-operations)
   - [Encrypting application data](#encrypting-application-data)
-  - [Encrypted Eloquent attribute (recipe)](#encrypted-eloquent-attribute-recipe)
+  - [Encrypted Eloquent attribute](#encrypted-eloquent-attribute)
   - [Protecting routes](#protecting-routes)
   - [Recovery keys](#recovery-keys)
   - [Two-factor authentication](#two-factor-authentication)
@@ -82,12 +82,19 @@ and a database-only compromise yields nothing useful.
 ## Requirements
 
 - PHP 8.2 or newer
-- Laravel 11 or newer
-- Laravel Fortify (only required for automatic auth-flow integration)
+- Laravel 11
 - `ext-sodium`
 - A **server-side session driver** (`file`, `database`, `redis`, `memcached`).
   The `cookie` driver is rejected at boot — see
   [Security architecture](#security-architecture) for why.
+
+Optional:
+
+- **Laravel Fortify** — only required for automatic auth-flow integration.
+  Listed in `composer.json` as a `suggest` rather than a hard `require` so
+  you can install the package without it. Without Fortify, set
+  `vaultable.fortify.auto_integrate = false` and drive the vault yourself
+  with the [manual API](#manual-vault-operations).
 
 ## Installation
 
@@ -256,117 +263,69 @@ $vault->rotateKek($user, $oldPassword, $newPassword);
 
 ### Encrypting application data
 
-The package gives you a VMK; what you do with it is your call. Here is the
-canonical recipe using the same XChaCha20-Poly1305 primitives the package uses
-internally.
+`VaultService` ships two convenience methods for encrypting and decrypting
+arbitrary strings with the unlocked VMK. The output is a single
+base64-encoded blob (nonce inline) safe to store in a `VARCHAR` or `TEXT`
+column.
 
 ```php
 use DigitalGrease\Vaultable\Contracts\VaultServiceInterface;
-use DigitalGrease\Vaultable\Crypto\AeadEncryption;
 
 $vault = app(VaultServiceInterface::class);
-$aead  = app(AeadEncryption::class);
 
-if (! $vault->isUnlocked()) {
-    abort(423, 'Vault is locked');
+$encoded = $vault->encrypt('super secret note');
+// "base64( nonce(24) || ciphertext+tag )"
+
+$plaintext = $vault->decrypt($encoded);
+// "super secret note"
+```
+
+`encrypt()` throws `VaultLockedException` if no vault is unlocked. `decrypt()`
+throws `VaultLockedException` for a locked vault and
+`VaultDecryptionFailedException` for a malformed or tampered payload.
+
+A fresh nonce is generated on every call to `encrypt()`, so the same
+plaintext produces a different ciphertext every time.
+
+If you'd rather work with the lower-level primitives directly (multiple
+encryptions sharing one nonce-domain, additional authenticated data, etc.),
+the same building blocks are available as `app(AeadEncryption::class)` —
+see the [development guide](docs/DEVELOPMENT.md#aeadencryption).
+
+### Encrypted Eloquent attribute
+
+The `VaultedString` cast wraps the helpers above so a column can be
+transparently vaulted:
+
+```php
+use DigitalGrease\Vaultable\Casts\VaultedString;
+
+class JournalEntry extends Model
+{
+    protected function casts(): array
+    {
+        return [
+            'body' => VaultedString::class,
+        ];
+    }
 }
+```
 
-$vmk   = $vault->getVmk();
-$nonce = $aead->generateNonce();          // 24 bytes, must be unique per encryption
-$ciphertext = $aead->encrypt(
-    plaintext: 'super secret note',
-    key:       $vmk,
-    nonce:     $nonce,
-);
+Reads and writes go through the cast automatically:
 
-// Persist BOTH the nonce and the ciphertext (the auth tag is in the ciphertext).
-DB::table('secrets')->insert([
-    'user_id'    => $user->id,
-    'nonce'      => $nonce,
-    'ciphertext' => $ciphertext,
+```php
+$entry = JournalEntry::create([
+    'user_id' => $user->id,
+    'body'    => 'today I learned something private',
 ]);
 
-// To read it back:
-$plaintext = $aead->decrypt($ciphertext, $vmk, $nonce);
+// later, on the same authenticated session:
+$entry->fresh()->body; // "today I learned something private"
 ```
 
-> The nonce must never repeat for a given key. `AeadEncryption::generateNonce()`
-> uses `random_bytes`, so the chance of collision over a 24-byte space is
-> astronomical — but never reuse a nonce manually.
-
-### Encrypted Eloquent attribute (recipe)
-
-A small custom cast turns the recipe above into a transparent Eloquent
-attribute. This is the cleanest way to vault a column.
-
-```php
-<?php
-
-namespace App\Casts;
-
-use DigitalGrease\Vaultable\Contracts\VaultServiceInterface;
-use DigitalGrease\Vaultable\Crypto\AeadEncryption;
-use DigitalGrease\Vaultable\Exceptions\VaultLockedException;
-use Illuminate\Contracts\Database\Eloquent\CastsAttributes;
-use Illuminate\Database\Eloquent\Model;
-
-/**
- * Encrypts a string attribute with the current user's VMK.
- * Storage format: base64(nonce(24) || ciphertext).
- */
-class VaultedString implements CastsAttributes
-{
-    public function get(Model $model, string $key, mixed $value, array $attributes): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        $vault = app(VaultServiceInterface::class);
-        $aead  = app(AeadEncryption::class);
-
-        $blob   = base64_decode($value);
-        $nonce  = substr($blob, 0, AeadEncryption::NONCE_LENGTH);
-        $cipher = substr($blob, AeadEncryption::NONCE_LENGTH);
-
-        return $aead->decrypt($cipher, $vault->getVmk(), $nonce);
-    }
-
-    public function set(Model $model, string $key, mixed $value, array $attributes): ?string
-    {
-        if ($value === null) {
-            return null;
-        }
-
-        $vault = app(VaultServiceInterface::class);
-        $aead  = app(AeadEncryption::class);
-
-        if (! $vault->isUnlocked()) {
-            throw new VaultLockedException;
-        }
-
-        $nonce  = $aead->generateNonce();
-        $cipher = $aead->encrypt((string) $value, $vault->getVmk(), $nonce);
-
-        return base64_encode($nonce . $cipher);
-    }
-}
-```
-
-Then on your model:
-
-```php
-protected function casts(): array
-{
-    return [
-        'card_number' => VaultedString::class,
-    ];
-}
-```
-
-> Vaulted columns are only readable while the vault is unlocked, which means
-> background jobs and queued listeners can't decrypt them unless you explicitly
-> propagate the VMK to them. That is by design.
+Vaulted columns are only readable while the vault is unlocked. Background
+jobs and queued listeners can't decrypt them unless you explicitly propagate
+the VMK to them. That is by design.
 
 ### Protecting routes
 

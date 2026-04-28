@@ -22,9 +22,20 @@
             ]
         }
     },
+    "require": {
+        "php": "^8.2",
+        "ext-sodium": "*",
+        "illuminate/contracts": "^11.0",
+        "illuminate/database": "^11.0",
+        "illuminate/support": "^11.0"
+    },
     "require-dev": {
-        "orchestra/testbench": "^10.8",
+        "laravel/fortify": "^1.0",
+        "orchestra/testbench": "^9.0",
         "phpunit/phpunit": "^11.0"
+    },
+    "suggest": {
+        "laravel/fortify": "Required for automatic vault management during the auth lifecycle (registration, login, password change, password reset, 2FA challenge)."
     },
     "autoload-dev": {
         "psr-4": {
