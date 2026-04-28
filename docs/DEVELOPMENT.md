@@ -232,6 +232,8 @@ src/
 │   ├── VaultDecryptionFailedException.php  AEAD auth-tag failure
 │   ├── VaultException.php                  base
 │   └── VaultLockedException.php            getVmk() / middleware on a locked vault
+├── Facades/
+│   └── Vault.php                           static-syntax wrapper around VaultServiceInterface
 ├── Http/Middleware/
 │   └── EnsureVaultUnlocked.php             route guard; aliased as 'vault.unlocked'
 ├── Models/
@@ -647,8 +649,6 @@ ever observable. If you don't capture it in a listener, it's gone.
   invalidated and there's no migration tool.
 - **No background-job decryption path.** Intentional — see
   [Goals and non-goals](#goals-and-non-goals).
-- **No facade.** `app(VaultServiceInterface::class)` is the official way to
-  resolve the service. A facade could be added without a breaking change.
 - **`VaultUnlocked` event has no payload for the password.** This is
   deliberate — leaking the password to listeners would defeat the model.
 
@@ -656,13 +656,11 @@ ever observable. If you don't capture it in a listener, it's gone.
 
 Probable next moves, in rough order:
 
-1. Ship a `LICENSE` file and tag the first 0.1.0 release.
-2. Add a facade (`Vault::isUnlocked()`, `Vault::getVmk()`,
-   `Vault::encrypt()`, `Vault::decrypt()`).
-3. Add Sanctum/Passport integration so API tokens can carry a re-derivable
+1. Tag the first 0.1.0 release.
+2. Add Sanctum/Passport integration so API tokens can carry a re-derivable
    "vault session" without password re-entry on every request. (Hard. Worth
    thinking through carefully.)
-4. Add a re-key console command for the day someone *does* need to rotate the
+3. Add a re-key console command for the day someone *does* need to rotate the
    pepper.
-5. Add a `VaultedJson` / `VaultedEncrypted<T>` cast so structured data can be
+4. Add a `VaultedJson` / `VaultedEncrypted<T>` cast so structured data can be
    stored without callers having to JSON-encode by hand.

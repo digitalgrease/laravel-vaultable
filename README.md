@@ -261,6 +261,30 @@ $vault->lockVault();
 $vault->rotateKek($user, $oldPassword, $newPassword);
 ```
 
+Or use the `Vault` facade:
+
+```php
+use DigitalGrease\Vaultable\Facades\Vault;
+
+Vault::createVault($user, $password);
+Vault::unlockVault($user, $password);
+
+if (Vault::isUnlocked()) {
+    $vmk = Vault::getVmk();
+}
+
+Vault::lockVault();
+Vault::rotateKek($user, $oldPassword, $newPassword);
+
+$encoded   = Vault::encrypt('secret');
+$plaintext = Vault::decrypt($encoded);
+```
+
+The two are equivalent — both resolve to the same singleton. Pick whichever
+fits your codebase: facades for shorter call sites and easy mocking
+(`Vault::shouldReceive(...)`), constructor injection of
+`VaultServiceInterface` for explicit dependencies.
+
 ### Encrypting application data
 
 `VaultService` ships two convenience methods for encrypting and decrypting
